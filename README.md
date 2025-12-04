@@ -8,7 +8,7 @@ On mesure le temps moyen de génération d’une timeline via l’endpoint :
 
 ```http
 GET /api/timeline?user=<username>&limit=20
-````
+```
 
 L’objectif est de voir comment ce temps évolue :
 
