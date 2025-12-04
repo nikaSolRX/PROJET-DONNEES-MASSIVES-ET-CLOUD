@@ -1,166 +1,209 @@
-# Tiny Instagram (minimal) on Google App Engine
 
-This repository contains a tiny Instagram-like demo implemented with Flask and Google Cloud Datastore (Firestore in Datastore mode). It is a small, educational project that demonstrates posting, following, and reading a simple timeline.
+# Projet Massive Data & Cloud – Benchmark TinyInsta (GCP Datastore + App Engine)
 
-This README describes how to run, seed and test the app, plus notes about GQL queries and common deployment troubleshooting.
+## 1. Contexte
 
-## Prerequisites
-- Create a GCP Project:`https://console.cloud.google.com/`
-  - See the prof.
+Ce projet évalue les performances de l’application TinyInsta (mini réseau social) déployée sur **Google App Engine** et utilisant **Google Cloud Datastore**.  
+On mesure le temps moyen de génération d’une timeline via l’endpoint :
 
-- Open a cloud shell 
-  - see the prof.
+```http
+GET /api/timeline?user=<username>&limit=20
+````
 
-* Initialize or select your GCP project and create the App Engine application (if not already created):
+L’objectif est de voir comment ce temps évolue :
 
-```sh
-gcloud init
-gcloud app create
-```
+1. Quand on augmente le **nombre d’utilisateurs concurrents**.
+2. Quand on augmente le **nombre de posts par utilisateur**.
+3. Quand on augmente le **nombre de followees par utilisateur**.
 
-- clone the prof github repository : 
-```
-git clone https://github.com/momo54/massive-gcp
-cd massive-gcp
-```
+Les résultats sont fournis sous forme de fichiers CSV et de barplots.
 
-* Install dependencies
-```sh
-pip install -r requirements.txt
-```
+---
 
-* Deploy the app:
+## 2. Liens
 
-```sh
-gcloud app deploy
-```
-
-* [OPTIONAL] Index does not matter:
-
-```sh
-gcloud app deploy index.yaml
-# or
-gcloud datastore indexes create index.yaml
-```
-
-* open the URL address of the you application, create account, post, follow. Does it Works?? If something is wrong where to find the error ?? 
-  * See the prof
+* **Application déployée** : `https://hip-return-473713-r7.appspot.com/`
+* **Dépôt GitHub/GitLab** : `https://github.com/nikaSolRX/PROJET-DONNEES-MASSIVES-ET-CLOUD.git`
 
 
-* How many servers are working for this app?? How much are you paying for running this app ? What is the cloud model for this app (Iaas, Paas, Saas). What is the Platform in PaaS ??
+---
 
-* See the impact in the datastore: do you see your data ?
-  * See the prof
+## 3. Structure du dépôt
 
-* How much are you paying for hosting these data in this store ?? 
-* What is the consistency of this store ?
-* What is the sharding strategy of this store ? How to be sure of that ? 
-* What queries can you write with store (expressivity)
-
-## HTTP Endpoints
-
-- `/` — HTML UI for simple interactions
-- `POST /login` — login with a username (no password)
-- `POST /post` — create a new post (form)
-- `POST /follow` — follow another user (form)
-- `GET /api/timeline?user=<username>&limit=<n>` — JSON timeline for a user (default limit 20)
-- `POST /admin/seed` — server-side seed (requires `SEED_TOKEN` via header `X-Seed-Token` or `token` param)
-
-Example server-side seed call:
-
-```sh
-curl -X POST \
-  -H "X-Seed-Token: change-me-seed-token" \
-  "https://<YOUR_APP>.appspot.com/admin/seed?users=8&posts=100&follows_min=1&follows_max=4&prefix=load"
-```
-
-## Access the backend from the CLI
-
-The JSON endpoint `GET /api/timeline?user=<username>&limit=20` is suitable for basic load experiments.
-
-- Run locally against the dev server:
-
-```sh
-ab -n 200 -c 20 "http://127.0.0.1:8080/api/timeline?user=demo1&limit=20"
-```
-
-- Run against the deployed app (no cookie):
-
-```sh
-ab -n 500 -c 50 "https://<YOUR_APP>.appspot.com/api/timeline?user=demo1&limit=20"
-```
-
-- Optional: include a session cookie if you want to test authenticated flows (get `session` cookie from your browser devtools):
-
-```sh
-AB_COOKIE="session=<VALUE>"
-ab -n 500 -c 50 -H "Cookie: $AB_COOKIE" "https://<YOUR_APP>.appspot.com/api/timeline?limit=20"
-```
-
-Interpreting common metrics:
-- `Requests per second` — throughput
-- `Time per request` — latency
-- `Failed requests` — should remain near 0 for a healthy run
-
-## GQL & Datastore notes
-
-The timeline query used by the app is roughly:
-
-```sql
-SELECT * FROM Post WHERE author IN @authors ORDER BY created DESC
-```
-
-Notes:
-- `IN` queries are conceptually implemented as a union of per-author scans followed by a k-way merge ordered by `created DESC`.
-- The repository includes `index.yaml` with a composite index (author + created desc), which is required for efficient execution of the timeline query.
-- Writes use the Datastore entity API; GQL is used for convenient reads only.
-
-Limitations and trade-offs:
-- `IN` with many values increases work and latency because it becomes multiple queries merged server-side.
-- Global queries are eventually consistent; only key lookups and ancestor queries are strongly consistent. See `NOTES.md` for more detail.
-
-## Troubleshooting: Cloud Build / staging bucket error
-
-If you encounter an error like:
+```text
+.
+├── out/                      # Résultats (CSV + PNG)
+│   ├── conc.csv
+│   ├── post.csv
+│   ├── fanout.csv
+│   ├── conc.png
+│   ├── post.png
+│   └── fanout.png
+├── app.yaml                  # Config App Engine
+├── index.yaml                # Index Datastore
+├── main.py                   # Application TinyInsta (Flask + Datastore)
+├── seed.py                   # Script de peuplement Datastore
+├── nettoyage_dataset.py      # Script de nettoyage du datastore 
+├── bench_conc_multi.py       # Benchmark concurrence
+├── bench_post_multi.py       # Benchmark nombre de posts
+├── bench_fanout_multi.py     # Benchmark nombre de followees
+├── requirements.txt          # Dépendances Python
+└── README.md                 # Ce fichier
 
 ```
-Failed to create cloud build: ... invalid bucket "staging.<PROJECT>.appspot.com"; service account ... does not have access
+
+Les fichiers CSV sont dans le dossier `out/`, comme demandé dans la consigne.
+
+---
+
+## 4. Génération des données (seed)
+
+Les datasets sont générés avec `seed.py`, qui :
+
+* crée un ensemble d’utilisateurs `prefix1`, `prefix2`, …
+* leur assigne des followees aléatoires dans une plage `[follows-min, follows-max]`
+* crée un nombre donné de posts répartis sur ces utilisateurs
+
+---
+
+## 5. Méthodologie de benchmark
+
+### 5.1 Principe général
+
+Au lieu d’utiliser `ab` (Apache Bench), les benchmarks sont écrits en **Python** pour respecter la consigne :
+
+> Quand on teste les timelines, on teste des timelines différentes, c’est-à-dire :
+> 50 utilisateurs simultanés vont chercher 50 timelines différentes (50 URLs distinctes en parallèle).
+
+Le principe commun des scripts :
+
+1. Générer le dataset approprié avec `seed.py`.
+2. Choisir une liste d’utilisateurs (par ex. `conc1`…`concC`).
+3. Envoyer **1000 requêtes HTTP** vers `/api/timeline` en répartissant ces requêtes sur ces utilisateurs.
+4. Utiliser un `ThreadPoolExecutor` pour exécuter les requêtes en parallèle.
+5. Mesurer la **latence de chaque requête**, calculer la moyenne, répéter 3 fois.
+6. Écrire les résultats dans un CSV (`PARAM,AVG_TIME,RUN,FAILED`) et produire un barplot.
+
+### 5.2 Respect de la consigne “timelines différentes”
+
+Pour une concurrence `C` ou un paramètre donné :
+
+* le script construit une liste de `C` utilisateurs différents (par ex. `conc1`…`concC`, `posts10_1`… ou `fanout50_1`… selon le préfixe),
+* les 1000 requêtes sont réparties sur ces utilisateurs (division + reste),
+* chaque thread envoie des requêtes pour un **utilisateur unique** (`/api/timeline?user=<userX>`).
+
+Ainsi, par exemple :
+
+* pour `C = 50`, il y a **50 threads**,
+* chaque thread interroge la timeline d’un user distinct,
+* on obtient bien 50 timelines différentes en parallèle.
+
+### 5.3 Scripts de benchmark
+
+#### `bench_conc_multi.py` – benchmark concurrence
+
+* Paramètres testés : `C = 1, 10, 20, 50, 100, 1000`.
+* Contexte de données : 1000 utilisateurs, ~50 posts/user, 20 followees/user.
+* Pour chaque `C` et chaque run :
+
+  * 1000 requêtes réparties sur `C` utilisateurs `conc1`…`concC`.
+  * Enregistrement de la moyenne en millisecondes dans `out/conc.csv`.
+* Génère le graphique `out/conc.png`.
+
+#### `bench_post_multi.py` – benchmark nombre de posts
+
+* Paramètres testés : `10, 100, 1000` posts par utilisateur.
+* Concurrence fixée : `C = 50` utilisateurs simultanés.
+* Chaque paramètre utilise un préfixe différent (`posts10`, `posts100`, `posts1000`).
+* Pour chaque paramètre et chaque run :
+
+  * 1000 requêtes réparties sur 50 utilisateurs, timelines différentes.
+  * Résultats dans `out/post.csv`.
+* Génère `out/post.png`.
+
+#### `bench_fanout_multi.py` – benchmark nombre de followees
+
+* Paramètres testés : `10, 50, 100` followees par utilisateur.
+* Concurrence fixée : `C = 50` utilisateurs simultanés.
+* Préfixes de users : `fanout10`, `fanout50`, `fanout100`.
+* Pour chaque paramètre et chaque run :
+
+  * 1000 requêtes réparties sur 50 utilisateurs.
+  * Résultats dans `out/fanout.csv`.
+* Génère `out/fanout.png`.
+
+---
+
+## 6. Résultats et interprétation
+
+### 6.1 Concurrence – `conc.png`
+
+![Concurrence](./out/conc.png)
+
+* On observe une augmentation nette du temps moyen par requête quand la concurrence passe de 1 → 10 → 20 → 50 → 100 utilisateurs.
+* Le point `C = 100` présente le temps le plus élevé et une variance importante.
+* À `C = 1000`, le temps moyen diminue légèrement par rapport à `C = 100`.
+  Cela peut s’expliquer par l’**autoscaling d’App Engine**, qui crée davantage d’instances pour absorber la très forte charge.
+* Globalement, la tendance confirme que **plus il y a d’utilisateurs simultanés, plus la timeline est coûteuse à générer**, même si l’autoscaling atténue le pic à très haute charge.
+
+---
+
+### 6.2 Nombre de followees – `fanout.png`
+
+![Fanout](./out/fanout.png)
+
+* Paramètres testés : 10, 50 et 100 followees par utilisateur, concurrence fixe à 50.
+* Le passage de **10 → 50 followees** fait exploser la latence (d’environ quelques centaines de ms à plusieurs secondes).
+* Le passage de **50 → 100 followees** augmente encore le temps moyen.
+* Ce comportement est cohérent avec l’implémentation de la timeline : la requête utilise un filtre `IN` sur les auteurs suivis, ce qui revient à exécuter plusieurs requêtes par auteur et à fusionner les résultats triés.
+* Conclusion : **le fanout (nombre de comptes suivis) est le facteur le plus pénalisant pour la performance de la timeline.**
+
+---
+
+### 6.3 Nombre de posts – `post.png`
+
+![Posts](./out/post.png)
+
+* Paramètres testés : 10, 100 et 1000 posts par utilisateur, concurrence fixe à 50, 20 followees par utilisateur.
+* Les temps restent élevés mais sont relativement proches pour les trois niveaux de posts.
+* L’augmentation du nombre de posts ne provoque pas une explosion de latence comparable au cas “fanout”.
+* Datastore s’appuie sur des index (auteur + date de création) qui permettent de récupérer efficacement les posts récents pour les auteurs suivis, même si le volume total est plus important.
+* Conclusion : **le volume de posts par utilisateur a un impact, mais moins marqué que le nombre de followees**.
+
+---
+
+## 7. Fichiers CSV
+
+Les fichiers CSV générés par les scripts se trouvent dans `out/` :
+
+* `out/conc.csv`   – résultats du benchmark de concurrence
+* `out/post.csv`   – résultats du benchmark sur le nombre de posts
+* `out/fanout.csv` – résultats du benchmark sur le fanout
+
+Format commun :
+
+```text
+PARAM,AVG_TIME,RUN,FAILED
+...
 ```
 
-Check the following:
+* `PARAM` = valeur testée (C, nombre de posts ou nombre de followees)
+* `AVG_TIME` = temps moyen par requête (ms) pour ce run
+* `RUN` = numéro de run (1, 2, 3)
+* `FAILED` = 0 si toutes les requêtes ont réussi, 1 si au moins une requête a échoué
 
-1. Required services are enabled:
+---
 
-```sh
-gcloud services enable appengine.googleapis.com cloudbuild.googleapis.com iam.googleapis.com storage.googleapis.com
-```
+## 8. Conclusion
 
-2. Ensure the App Engine service account has sufficient permissions on the staging bucket. For example, grant storage admin at project level (adjust to least privilege required):
+Les expériences montrent que :
 
-```sh
-PROJECT_ID="<YOUR_PROJECT>"
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:${PROJECT_ID}@appspot.gserviceaccount.com" \
-  --role="roles/storage.admin"
-```
+1. **La concurrence** fait augmenter le temps de réponse, mais App Engine gère la montée en charge grâce à l’autoscaling, ce qui évite une explosion systématique de la latence.
+2. **Le nombre de followees** est le paramètre le plus critique : plus un utilisateur suit de comptes, plus la requête timeline est coûteuse (requêtes multiples, fusion et tri).
+3. **Le nombre de posts** a un effet plus modéré, grâce aux index Datastore qui optimisent la récupération des posts récents.
 
-3. If the staging bucket is missing, create it and grant the service account object admin on the bucket:
-
-```sh
-gsutil mb -p "$PROJECT_ID" -l europe-west1 "gs://staging.${PROJECT_ID}.appspot.com"
-gsutil iam ch serviceAccount:${PROJECT_ID}@appspot.gserviceaccount.com:objectAdmin "gs://staging.${PROJECT_ID}.appspot.com"
-```
-
-Index deployment (if GCP prompts for missing indexes):
-
-```sh
-gcloud datastore indexes create index.yaml || gcloud app deploy index.yaml
-```
-
-## Notes on consistency, partitioning and CAP
-See `NOTES.md` for a concise explanation of Datastore's partitioning (range partitioning with dynamic splits), replication, and its consistency model (generally AP for global queries; strong consistency for key lookups and ancestor queries).
-
-## License
-MIT
+Ces résultats sont cohérents avec le modèle de Datastore et mettent en évidence les limites d’un schéma naïf de timeline pour un réseau social : pour passer à l’échelle, il faudrait envisager des mécanismes supplémentaires (pré-calcul de timeline, sharding, cache, etc.).
 
 ```
+
+

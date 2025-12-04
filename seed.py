@@ -19,7 +19,7 @@ ATTENTION: Ce script écrit directement dans Datastore du projet courant (gcloud
 from __future__ import annotations
 import argparse
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from google.cloud import datastore
 
 
@@ -73,7 +73,10 @@ def create_posts(client: datastore.Client, names: list[str], total_posts: int, d
         return 0
     created = 0
     # Répartition simple: choix aléatoire d'auteur pour chaque post
-    base_time = datetime.utcnow()
+    base_time = datetime.now(timezone.utc)
+    batch_size = 1000
+    batch = client.batch()
+    batch.begin()
     for i in range(total_posts):
         author = random.choice(names)
         key = client.key('Post')
@@ -83,8 +86,16 @@ def create_posts(client: datastore.Client, names: list[str], total_posts: int, d
         post['content'] = f"Seed post {i+1} by {author}"
         post['created'] = base_time - timedelta(seconds=i)
         if not dry:
-            client.put(post)
+            batch.put(post)
         created += 1
+        if not dry and (i + 1) % batch_size == 0 and i > 0:
+            print(f"  Committing batch of {batch_size} posts... ({i+1}/{total_posts})")
+            batch.commit()
+            batch = client.batch()
+            batch.begin()
+    if not dry and len(batch.mutations) > 0:
+        print(f"  Committing final batch of {len(batch.mutations)} posts...")
+        batch.commit()
     return created
 
 
