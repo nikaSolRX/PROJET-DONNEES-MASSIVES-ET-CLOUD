@@ -203,7 +203,3 @@ Les expériences montrent que :
 3. **Le nombre de posts** a un effet plus modéré, grâce aux index Datastore qui optimisent la récupération des posts récents.
 
 Ces résultats sont cohérents avec le modèle de Datastore et mettent en évidence les limites d’un schéma naïf de timeline pour un réseau social : pour passer à l’échelle, il faudrait envisager des mécanismes supplémentaires (pré-calcul de timeline, sharding, cache, etc.).
-
-```
-
-
